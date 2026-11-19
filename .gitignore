@@ -1,0 +1,14 @@
+# Virtual environments
+myenv/
+.venv/
+
+# Generated data and model weights (recreate with prepare_data.py / train.py)
+data/
+models/
+
+# Python
+__pycache__/
+*.pyc
+
+# macOS
+.DS_Store
