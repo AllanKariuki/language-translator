@@ -41,6 +41,54 @@ python evaluate.py --base --limit 200   # baseline to beat
 python evaluate.py
 ```
 
+## Web demo and API
+
+Convert the fine-tuned model to CTranslate2 int8 (much faster on CPU):
+
+```bash
+python convert_ct2.py
+```
+
+Run the Gradio demo (self-contained, no server needed):
+
+```bash
+python app.py
+```
+
+Run the FastAPI service:
+
+```bash
+uvicorn api:app --host 0.0.0.0 --port 8000
+```
+
+Translate:
+
+```bash
+curl -X POST http://localhost:8000/translate \
+  -H "Content-Type: application/json" \
+  -d '{"text": "Hello, how are you?", "source_lang": "eng_Latn", "target_lang": "swh_Latn"}'
+```
+
+Send feedback:
+
+```bash
+curl -X POST http://localhost:8000/feedback \
+  -H "Content-Type: application/json" \
+  -d '{"source_text": "Hello.", "source_lang": "eng_Latn", "target_lang": "swh_Latn", "translation": "Habari.", "rating": "up"}'
+```
+
+Run tests:
+
+```bash
+python -m pytest
+```
+
+### Deploying the demo to Hugging Face Spaces
+
+1. Convert the model and upload the `models/nllb-en-sw-ct2` directory to a Hugging Face model repo.
+2. Create a Gradio Space and add `app.py`, `engine.py`, `feedback.py`, and `requirements.txt`.
+3. Point the model path at the uploaded repo (via `--model` or the default in `app.py`) and commit.
+
 ## Files
 
 - `prepare_data.py` — downloads the en-sw corpus, cleans (length ratio, dedupe), splits train/val/test, saves to `data/`

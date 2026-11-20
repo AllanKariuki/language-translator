@@ -5,3 +5,9 @@ accelerate>=0.33
 sentencepiece
 sacrebleu
 evaluate
+ctranslate2
+fastapi
+uvicorn
+gradio
+pytest
+httpx

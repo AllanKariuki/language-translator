@@ -8,11 +8,14 @@ Usage:
 Run prepare_data.py first (creates data/en-sw with a 'test' split).
 """
 import argparse
+import os
 
 import sacrebleu
 import torch
 from datasets import load_from_disk
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+
+from engine import Translator
 
 BASE_MODEL = "facebook/nllb-200-distilled-600M"
 EN, SW = "eng_Latn", "swh_Latn"
@@ -53,10 +56,23 @@ def main():
     args = parser.parse_args()
 
     path = BASE_MODEL if args.base else args.model
-    device = get_device()
-    print(f"Loading {path} on {device} ...")
-    tokenizer = AutoTokenizer.from_pretrained(path)
-    model = AutoModelForSeq2SeqLM.from_pretrained(path).to(device).eval()
+    use_ct2 = not args.base and os.path.exists(os.path.join(path, "model.bin"))
+
+    if use_ct2:
+        print(f"Loading {path} (ctranslate2 int8) ...")
+        translator = Translator(path)
+
+        def translate(texts, src_code, tgt_code):
+            return translator.translate_batch(texts, src_code, tgt_code)
+
+    else:
+        device = get_device()
+        print(f"Loading {path} on {device} ...")
+        tokenizer = AutoTokenizer.from_pretrained(path)
+        model = AutoModelForSeq2SeqLM.from_pretrained(path).to(device).eval()
+
+        def translate(texts, src_code, tgt_code):
+            return translate_batch(texts, model, tokenizer, src_code, tgt_code, device)
 
     test = load_from_disk("data/en-sw")["test"]
     if args.limit:
@@ -69,7 +85,7 @@ def main():
         ("sw->en", sw, en, SW, EN),
     ]:
         print(f"\nTranslating {name} ({len(src_texts)} sentences) ...")
-        hyps = translate_batch(src_texts, model, tokenizer, src_code, tgt_code, device)
+        hyps = translate(src_texts, src_code, tgt_code)
         bleu = sacrebleu.corpus_bleu(hyps, [refs])
         chrf = sacrebleu.corpus_chrf(hyps, [refs])
         print(f"{name}:  BLEU {bleu.score:.2f}   chrF {chrf.score:.2f}")
