@@ -5,7 +5,7 @@ Every pair is used in both directions (en->sw and sw->en), so --max-samples
 the validation set, and training stops early once chrF stops improving.
 
 Usage:
-    python train.py --max-samples 100000 --epochs 1 --batch-size 8
+    python train.py --max-samples 100000 --epochs 1 --batch-size 4
 
 Run prepare_data.py first. Output model: models/nllb-en-sw
 """
@@ -59,6 +59,12 @@ class NllbTrainer(Seq2SeqTrainer):
     row's decoder with [</s>, lang] — this works even when a batch mixes directions.
     """
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # M2M100's forward takes **kwargs but ignores num_items_in_batch, so let the
+        # Trainer divide the loss by gradient_accumulation_steps itself.
+        self.model_accepts_loss_kwargs = False
+
     def prediction_step(self, model, inputs, prediction_loss_only, ignore_keys=None, **gen_kwargs):
         if self.args.predict_with_generate and not prediction_loss_only:
             labels = inputs["labels"]
@@ -72,10 +78,10 @@ class NllbTrainer(Seq2SeqTrainer):
 
 
 class FreeMemoryCallback(TrainerCallback):
-    """Return cached memory to the OS after evals/saves.
+    """Return cached memory to the OS after every optimizer step, eval, and save.
 
-    On MPS, memory freed after a checkpoint save or eval stays cached by PyTorch,
-    so usage ratchets up with every checkpoint until the Mac starts swapping.
+    On MPS, freed memory stays cached by PyTorch, so usage ratchets up with every
+    batch and checkpoint until the Mac OOMs or starts swapping.
     """
 
     def _free(self, *args, **kwargs):
@@ -85,7 +91,7 @@ class FreeMemoryCallback(TrainerCallback):
         elif torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-    on_evaluate = on_save = _free
+    on_step_end = on_evaluate = on_save = _free
 
 
 def make_compute_metrics(tokenizer):
@@ -118,7 +124,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--max-samples", type=int, default=100_000, help="pairs; each is used in both directions")
     parser.add_argument("--epochs", type=int, default=1)
-    parser.add_argument("--batch-size", type=int, default=8)
+    parser.add_argument("--batch-size", type=int, default=4)
+    parser.add_argument("--grad-accum", type=int, default=8, help="gradient accumulation steps; effective batch = batch-size x grad-accum")
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--eval-samples", type=int, default=200, help="validation pairs (x2 directions)")
     parser.add_argument("--eval-steps", type=int, default=500)
@@ -139,7 +146,7 @@ def main():
         num_train_epochs=args.epochs,
         per_device_train_batch_size=args.batch_size,
         per_device_eval_batch_size=args.batch_size,
-        gradient_accumulation_steps=4,
+        gradient_accumulation_steps=args.grad_accum,
         learning_rate=args.lr,
         # Adafactor + gradient checkpointing keep memory low enough for a 24GB Mac
         # (AdamW alone holds ~5GB of optimizer state for this model).
@@ -168,7 +175,7 @@ def main():
         args=training_args,
         train_dataset=train_data,
         eval_dataset=eval_data,
-        data_collator=DataCollatorForSeq2Seq(tokenizer, model=model),
+        data_collator=DataCollatorForSeq2Seq(tokenizer, model=model, pad_to_multiple_of=8),
         processing_class=tokenizer,
         compute_metrics=make_compute_metrics(tokenizer),
         callbacks=[EarlyStoppingCallback(early_stopping_patience=args.patience), FreeMemoryCallback()],
